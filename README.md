@@ -12,12 +12,16 @@ scipy 1.11.4
 
 matplotlib 3.8.2
 
+### UK Biobank
+
+Note that the code for model fitting and data generation are only usable with access to individual-level UK Biobank data, which (once available) is only accessible to UK Biobank approved researchers.
+
 
 ### Scripts
 
 - UKB data pipeline (TO ADD)
 
-- Single fitness model with least-squares minimisation (TO ADD)
+- Single fitness model with least-squares minimisation (TO ADD - last (as requires)
 
 - Single fitness model with maximum likelihood estimation (TO ADD)
 
