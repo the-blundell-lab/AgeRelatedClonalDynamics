@@ -157,3 +157,184 @@ def quantile_density_plot(ax, variant_quantiles, mu, cumul_quantile_density, num
             yerr = np.sqrt(np.arange(n_variants) + 1) / (n_in_quantile * mu)
             ax.errorbar(variants_ordered.VAF, y, yerr, color=quantile_colour_list[qt], ls='none', elinewidth=0.5)
     return 0
+
+
+########################################################################################################################
+# Two-stage model
+########################################################################################################################
+
+#%%
+def fitness_stepfunction(age, s1, s2, step_age):
+    if age < step_age:
+        return s1
+    if age >= step_age:
+        return s2
+
+# also define the integral from zero to 'upper'. Plenty faster than integrating using it.quad
+def fsf_integral_from_zero(upper, s1, s2, step_age):
+
+    if upper < step_age:
+        return upper*s1
+    else:
+        return s1*step_age + s2*(upper-step_age)
+#%%
+# done in terms of n-tilde for easy comparison with clonal competition case
+def heuristic_rho_of_f(f, mu, s1, s2, age, N, step_age, n2=0):
+
+    #int_s, err = it.quad(s_of_t, 0, age, args=(s, tau_params))
+    int_s = fsf_integral_from_zero(age, s1, s2, step_age)
+
+    n_tilde = (np.exp(int_s)-1) / s1
+    theta = mu*N
+
+    # broken into parts for easy reading (see expression above)
+    coeff = (2*(N+n2))**theta / (1-2*f)**(theta+1)
+    main_freq_dependence = 1/(f**(1-theta))
+    in_exponential = (-2*(N+n2)*f)/(n_tilde*(1-2*f))
+    adjustment = 1/(gamma(theta)*n_tilde**theta)
+
+    return coeff*main_freq_dependence*np.exp(in_exponential)*adjustment
+#%%
+def heuristic_sampling_integrand(f, mu, s1, s2, age, N, step_age, reads, depth):
+
+    rho_of_f = heuristic_rho_of_f(f, mu, s1, s2, age, N, step_age)
+    return rho_of_f * scipy.stats.binom.pmf(reads, depth, f)
+
+def rho_heuristic_with_sampling(r, depth, mu, s1, s2, age, N, step_age):
+
+    f_integration_limits = [0, 0.5]
+    I = it.quad(heuristic_sampling_integrand, *f_integration_limits, args=(mu, s1, s2, age, N, step_age, r, depth))
+    return I[0]
+#%%
+def likelihood_variant(r, depth, mu, s1, s2, age, N, step_age):
+
+    return rho_heuristic_with_sampling(r, depth, mu, s1, s2, age, N, step_age)
+#%%
+def likelihood_no_variant(threshold, mu, s1, s2, age, N, step_age):
+
+    L_below_threshold = it.quad(heuristic_rho_of_f, 0, threshold, args=(mu, s1, s2, age, N, step_age))
+
+    return L_below_threshold[0]#/normalisation[0]
+#%%
+# define a function to return the (negative) loglikelihood of a given set of parameters (mu, s1, s2). Does not vary the age step point (usually 40)
+def variable_tau_loglikelihood(optimisation_parameters, variant_quantiles, biobank_ages_bins_novar, N, step_age, threshold, verbose=False):
+
+    variants_min_vaf = threshold
+    mu, s1, s2 = optimisation_parameters
+    LL_variant_list = []
+    for row in variant_quantiles.index:
+        depth = variant_quantiles.loc[row]['depth']
+        r = variant_quantiles.loc[row]['var_depth']
+        age = variant_quantiles.loc[row]['Age.when.attended.assessment.centre_v0']
+        parameters = [mu, s1, s2, age, N, step_age]
+        LL_variant_list.append(np.log(likelihood_variant(r, depth, *parameters)))
+    LL_variants = sum(LL_variant_list)
+
+    LL_no_variants = 0
+    for row in biobank_ages_bins_novar.index:
+        age = biobank_ages_bins_novar.loc[row]['Age.when.attended.assessment.centre_v0']
+        age_count = biobank_ages_bins_novar.loc[row]['age_count']
+        LL_single = np.log(likelihood_no_variant(variants_min_vaf, mu, s1, s2, age, N, step_age))*age_count
+        LL_no_variants += LL_single
+
+    if verbose:
+        return [-LL_variants, -LL_no_variants]
+    else:
+        return -LL_no_variants - LL_variants
+
+
+#%%
+def ageing_predictions_calc(mu, s1, s2, N, step_age, variant_quantiles, biobank_bins_quantiles, number_of_quantiles):
+
+    D = int(variant_quantiles.depth.mean())
+    number_of_individuals = biobank_bins_quantiles.age_count.sum()
+
+    sampled_quantile_density = {}
+    cumul_quantile_density = {}
+    sampled_overall_density = np.zeros(D+1)
+
+    for qt in range(number_of_quantiles):
+        quantile_age_bins = biobank_bins_quantiles[biobank_bins_quantiles.quantile_labels == qt]
+        n_in_quantile = quantile_age_bins.age_count.sum()
+
+        # calculate sampled density
+        sampled_quantile_density[qt] = np.zeros(D + 1)
+        for row in quantile_age_bins.index:
+            age = quantile_age_bins['Age.when.attended.assessment.centre_v0'][row]
+            age_count = quantile_age_bins['age_count'][row]
+
+            for r in range(D + 1):
+                increment = rho_heuristic_with_sampling(r, D, mu, s1, s2, age, N, step_age) * age_count
+                sampled_quantile_density[qt][r] += increment / n_in_quantile
+                sampled_overall_density[r] += increment / number_of_individuals
+
+                #clear_output(True)
+                #print(age, age_count)
+                #print(r, '/', D)
+
+        cumul_quantile_density[qt] = np.cumsum(sampled_quantile_density[qt][::-1])[::-1]
+
+
+    cumul_overall_density = np.cumsum(sampled_overall_density[::-1])[::-1]
+
+    return cumul_overall_density, cumul_quantile_density
+
+def estimate_prevalence(lower_cutoff, ageing_params, N):
+    mu, s1, s2, step_age = ageing_params
+
+    #lower_cutoff = 2 / D
+
+    prev_ageing = []
+
+    for age in range(1, 92):
+        #clear_output()
+        #print(age)
+        # naive
+
+        # ageing
+        prev_ageing.append(it.quad(heuristic_rho_of_f, lower_cutoff, 0.5, args=(mu, s1, s2, age, N, step_age))[0])
+
+    return prev_ageing
+
+# pheno should be biobank_healthy_pheno
+# set axes limits and call plt.show() separately
+def plot_prevalence(axes, variants, biobank_bins_quantiles, bins_age, prev_ageing, colour, prev_naive=None, logscale=False):
+    diffs = np.diff(bins_age)
+    bin_centres = bins_age[:-1] + diffs / 2
+    # recreate list of all ukb ages using the condensed biobank_bins_quantiles - so it can be done without individualised data
+    pheno_all_ages = np.repeat(biobank_bins_quantiles['Age.when.attended.assessment.centre_v0'].values,
+                               biobank_bins_quantiles['age_count'].values).tolist()
+    pheno_age_bins = np.histogram(pheno_all_ages, bins=bins_age)[0]
+    variant_bins = np.histogram(variants['Age.when.attended.assessment.centre_v0'], bins=bins_age)[0]
+    errors = np.sqrt(variant_bins)
+
+    x1 = list(range(1, 41))
+    x2 = list(range(40, 91))
+    axes.plot(x1, prev_ageing[:len(x1)], ls='dashed', c=colour, alpha=0.3)
+    axes.plot(x2, prev_ageing[len(x1):], c=colour, alpha=1)
+
+    axes.scatter(bin_centres, variant_bins / pheno_age_bins, label='placeholder', c=colour)
+    axes.errorbar(bin_centres, variant_bins / pheno_age_bins, errors / pheno_age_bins, ls='none', color=colour)
+    if logscale:
+        axes.set_yscale('log')
+        #axes.set_ylim(variant_bins[0]/5)
+    else:
+        axes.set_ylim(0, variant_bins[-1] * 1.7 / pheno_age_bins[-1])
+    #axes.legend(fontsize=12)
+    axes.set_ylabel('prevalence')
+    axes.set_xlabel('age')
+    axes.set_xlim(20, 75)
+
+    axes.axvspan(0, 40, alpha=0.1, facecolor='grey', edgecolor='None')
+    yticks = axes.get_yticks()
+    axes.set_yticks(yticks, labels=[str(f'{a*100:.2g}')+'%' for a in yticks]) # rounded to 2sf
+    axes.set_ylim(axes.get_ylim())
+
+    if prev_naive is not None:
+        x = list(range(0, 91))
+        axes.plot(x, prev_naive, lw=0.5, c='k', alpha=0.3)
+
+    axes.axvspan(0, 40, alpha=0.1, facecolor='grey', edgecolor='None')
+    yticks = axes.get_yticks()
+    axes.set_yticks(yticks, labels=[str(f'{a*100:.2g}')+'%' for a in yticks]) # rounded to 2sf
+
