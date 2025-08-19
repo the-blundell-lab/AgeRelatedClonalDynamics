@@ -19,6 +19,8 @@ Note that the code for model fitting and data generation are only usable with ac
 
 ### Scripts
 
+- evolutionary\_functions.py contains all functions relevant to the evolutionary modelling. These are imported into the data processing notebooks.
+
 - UKB data pipeline (TO ADD)
 
 - Single fitness model with least-squares minimisation (Plotting complete - Fig. 1 and supplmenetary figures)
@@ -29,4 +31,4 @@ Note that the code for model fitting and data generation are only usable with ac
 
 - Clonal competition model (TO ADD)
 
-- Supplementary figure generation (TO ADD)
+- Additional supplementary figure generation (TO ADD)
