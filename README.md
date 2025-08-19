@@ -21,11 +21,9 @@ Note that the code for model fitting and data generation are only usable with ac
 
 - UKB data pipeline (TO ADD)
 
-- Single fitness model with least-squares minimisation (Plotting complete)
+- Single fitness model with least-squares minimisation (Plotting complete - Fig. 1 and supplmenetary figures)
 
-- Single fitness model with maximum likelihood estimation (TO ADD)
-
-- Two-stage model with maximum likelihood estimation (TO ADD)
+- Two-stage model with maximum likelihood estimation (Plotting complete - Fig. 2 and supplementary figures)
 
 - Distribution of fitness model (TO ADD)
 
