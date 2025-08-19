@@ -338,3 +338,100 @@ def plot_prevalence(axes, variants, biobank_bins_quantiles, bins_age, prev_agein
     yticks = axes.get_yticks()
     axes.set_yticks(yticks, labels=[str(f'{a*100:.2g}')+'%' for a in yticks]) # rounded to 2sf
 
+
+
+########################################################################################################################
+# Distribution of fitness effects functions
+########################################################################################################################
+
+
+def gaussian_dfe_function(s, sbar, sigma):
+    norm = 1/(np.sqrt(2*np.pi)*sigma)
+    return norm*np.exp(-0.5*((s-sbar)/(sigma))**2)
+
+def dfe_density_integrand(s, f, mu, sbar, sigma, age, N):
+    return rho_of_f(f, mu, s, age, N) * gaussian_dfe_function(s, sbar, sigma)
+
+def dfe_rho_integrated(f, mu, sbar, sigma, age, N):
+    s_integration_limits = [sbar-10*sigma, sbar+10*sigma] # note that this integral is over s
+    return it.quad(dfe_density_integrand, *s_integration_limits, args=(f, mu, sbar, sigma, age, N))[0]
+
+def dfe_sampling_integrand(f, mu, sbar, sigma, age, N, reads, depth):
+    f_density = dfe_rho_integrated(f, mu, sbar, sigma, age, N)
+    return f_density * scipy.stats.binom.pmf(reads, depth, f)
+
+def rho_dfe_with_sampling(r, depth, mu, sbar, sigma, age, N):
+    f_integration_limits = [0, 0.5]
+    I = it.quad(dfe_sampling_integrand, *f_integration_limits, args=(mu, sbar, sigma, age, N, r, depth))
+    return I[0]
+
+def likelihood_variant_dfe(r, depth, mu, sbar, sigma, age, N):
+    return rho_dfe_with_sampling(r, depth, mu, sbar, sigma, age, N)
+
+def likelihood_no_variant_dfe(threshold, mu, sbar, sigma, age, N):
+    L_below_threshold = it.quad(dfe_rho_integrated, 0, threshold, args=(mu, sbar, sigma, age, N))[0]
+    return L_below_threshold
+
+
+def dfe_only_loglikelihood(optimisation_parameters, variant_quantiles, biobank_ages_bins_novar, N, trim_threshold, verbose=False):
+
+    mu, sbar, sigma = optimisation_parameters
+
+    LL_variant_list = []
+    for row in variant_quantiles.index:
+        depth = variant_quantiles.loc[row]['depth']
+        r = variant_quantiles.loc[row]['var_depth']
+        age = variant_quantiles.loc[row]['Age.when.attended.assessment.centre_v0']
+        parameters = [mu, sbar, sigma, age, N]
+        LL_variant_list.append(np.log(likelihood_variant_dfe(r, depth, *parameters)))
+    LL_variants = sum(LL_variant_list)
+
+    LL_no_variants = 0
+    for row in biobank_ages_bins_novar.index:
+        age = biobank_ages_bins_novar.loc[row]['Age.when.attended.assessment.centre_v0']
+        age_count = biobank_ages_bins_novar.loc[row]['age_count']
+        LL_single = np.log(likelihood_no_variant_dfe(trim_threshold, mu, sbar, sigma, age, N))*age_count
+        LL_no_variants += LL_single
+
+    if verbose:
+        return [LL_variants, LL_variant_list, LL_no_variants, -LL_no_variants - LL_variants]
+    else:
+        return - LL_no_variants - LL_variants
+
+
+def dfe_only_predictions_calc(mu, sbar, sigma, N, variant_quantiles, biobank_bins_quantiles, number_of_quantiles):
+
+
+    #alpha = 1; step_age = 40
+    D = int(variant_quantiles.depth.mean())
+    number_of_individuals = biobank_bins_quantiles.age_count.sum()
+
+    sampled_quantile_density = {}
+    cumul_quantile_density = {}
+    sampled_overall_density = np.zeros(D+1)
+
+    for qt in range(number_of_quantiles):
+        quantile_age_bins = biobank_bins_quantiles[biobank_bins_quantiles.quantile_labels == qt]
+        n_in_quantile = quantile_age_bins.age_count.sum()
+
+        # calculate sampled density
+        sampled_quantile_density[qt] = np.zeros(D + 1)
+        for row in quantile_age_bins.index:
+            age = quantile_age_bins['Age.when.attended.assessment.centre_v0'][row]
+            age_count = quantile_age_bins['age_count'][row]
+
+            for r in range(D + 1):
+                increment = rho_dfe_with_sampling(r, D, mu, sbar, sigma, age, N) * age_count
+                sampled_quantile_density[qt][r] += increment / n_in_quantile
+                sampled_overall_density[r] += increment / number_of_individuals
+
+                clear_output()
+                print(age, age_count)
+                print(r, '/', D)
+
+        cumul_quantile_density[qt] = np.cumsum(sampled_quantile_density[qt][::-1])[::-1]
+
+
+    cumul_overall_density = np.cumsum(sampled_overall_density[::-1])[::-1]
+
+    return cumul_overall_density, cumul_quantile_density

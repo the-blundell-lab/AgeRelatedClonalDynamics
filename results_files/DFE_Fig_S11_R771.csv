@@ -1,0 +1,3 @@
+﻿date_time,varID,mu0,sbar0,sigma0,mu,sbar,sigma,success,message,fun,nit,source
+04/30/24 01:01:23,DNMT3A R771*,1.20E-08,0.1522,0.03269,6.64E-09,0.118378992,0.026623052,FALSE,Maximum number of iterations has been exceeded.,1926.444797,40,sbar_limited
+01/19/25 08:03:53,DNMT3A R771*,2.72E-09,0.164082596,0.001,2.65E-07,3.10E-07,0.055091373,TRUE,Optimization terminated successfully.,2281.562856,203,sbar_unlimited
