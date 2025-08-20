@@ -27,8 +27,8 @@ Note that the code for model fitting and data generation are only usable with ac
 
 - Two-stage model with maximum likelihood estimation (Plotting complete - Fig. 2 and supplementary figures)
 
-- Distribution of fitness model (TO ADD)
+- Distribution of fitness model (Fig. 3 and supplementary figures)
 
-- Clonal competition model (TO ADD)
+- Clonal competition model (Fig. 4 and supplementary figures)
 
 - Additional supplementary figure generation (TO ADD)
