@@ -25,7 +25,7 @@ Note that the code for model fitting and data generation are only usable with ac
 
 - Single fitness model with least-squares minimisation (Plotting complete - Fig. 1 and supplmenetary figures)
 
-- Two-stage model with maximum likelihood estimation (Plotting complete - Fig. 2 and supplementary figures)
+- Two-stage model with maximum likelihood estimation (Plotting complete - Fig. 1, 2 and supplementary figures)
 
 - Distribution of fitness model (Fig. 3 and supplementary figures)
 
