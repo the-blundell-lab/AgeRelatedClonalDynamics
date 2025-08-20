@@ -206,11 +206,11 @@ def rho_heuristic_with_sampling(r, depth, mu, s1, s2, age, N, step_age):
     I = it.quad(heuristic_sampling_integrand, *f_integration_limits, args=(mu, s1, s2, age, N, step_age, r, depth))
     return I[0]
 #%%
-def likelihood_variant(r, depth, mu, s1, s2, age, N, step_age):
+def ageing_likelihood_variant(r, depth, mu, s1, s2, age, N, step_age):
 
     return rho_heuristic_with_sampling(r, depth, mu, s1, s2, age, N, step_age)
 #%%
-def likelihood_no_variant(threshold, mu, s1, s2, age, N, step_age):
+def ageing_likelihood_no_variant(threshold, mu, s1, s2, age, N, step_age):
 
     L_below_threshold = it.quad(heuristic_rho_of_f, 0, threshold, args=(mu, s1, s2, age, N, step_age))
 
@@ -227,14 +227,14 @@ def variable_tau_loglikelihood(optimisation_parameters, variant_quantiles, bioba
         r = variant_quantiles.loc[row]['var_depth']
         age = variant_quantiles.loc[row]['Age.when.attended.assessment.centre_v0']
         parameters = [mu, s1, s2, age, N, step_age]
-        LL_variant_list.append(np.log(likelihood_variant(r, depth, *parameters)))
+        LL_variant_list.append(np.log(ageing_likelihood_variant(r, depth, *parameters)))
     LL_variants = sum(LL_variant_list)
 
     LL_no_variants = 0
     for row in biobank_ages_bins_novar.index:
         age = biobank_ages_bins_novar.loc[row]['Age.when.attended.assessment.centre_v0']
         age_count = biobank_ages_bins_novar.loc[row]['age_count']
-        LL_single = np.log(likelihood_no_variant(variants_min_vaf, mu, s1, s2, age, N, step_age))*age_count
+        LL_single = np.log(ageing_likelihood_no_variant(variants_min_vaf, mu, s1, s2, age, N, step_age))*age_count
         LL_no_variants += LL_single
 
     if verbose:
@@ -435,3 +435,249 @@ def dfe_only_predictions_calc(mu, sbar, sigma, N, variant_quantiles, biobank_bin
     cumul_overall_density = np.cumsum(sampled_overall_density[::-1])[::-1]
 
     return cumul_overall_density, cumul_quantile_density
+
+
+## combined DFE and two-stage model - legacy functions, only used in supplementary figure 10 for demonstration
+
+def heuristic_dfe_density_integrand(s, f, mu, sbar, sigma, alpha, age, N, step_age):
+    return heuristic_rho_of_f(f, mu, s, alpha, age, N, step_age) * gaussian_dfe_function(s, sbar, sigma)
+
+def heuristic_dfe_rho_integrated(f, mu, sbar, sigma, alpha, age, N, step_age):
+    s_integration_limits = [0, 0.5] # note that this is an integral over s, not frequency, so stopping at 0.5 is an arbitrary decision to preserve numerical stability
+    return it.quad(heuristic_dfe_density_integrand, *s_integration_limits, args=(f, mu, sbar, sigma, alpha, age, N, step_age))[0]
+
+
+
+########################################################################################################################
+# Clonal competition functions
+########################################################################################################################
+
+#%%
+# competitive density functions
+
+def competitive_integrand(n_2, f_1, mu_1, mu_2, s_1, s_2, age, N):
+
+    rho_n2 = rho_of_n(n_2, mu_2, s_2, age, N)
+    rho_f1_given_n2 = rho_of_f(f_1, mu_1, s_1, age, N, n2=n_2)
+
+    return rho_n2 * rho_f1_given_n2
+
+def rho_competitive(f_1, mu_1, mu_2, s_1, s_2, age, N, int_limit_lower, int_limit_upper):
+
+    return it.quad(competitive_integrand, int_limit_lower, int_limit_upper, args=(f_1, mu_1, mu_2, s_1, s_2, age, N))[0]
+#%%
+# unlike in previous function, try without architecture to evaluate up to 1 and instead simply use 0.5 as the upper limit of integration. this should work
+# do not use log_density as we need to integrate it
+def competitive_sampling_integrand(f_1, mu_1, mu_2, s_1, s_2, age, N, int_limit_lower, int_limit_upper, reads, depth):
+
+    f_density = rho_competitive(f_1, mu_1, mu_2, s_1, s_2, age, N, int_limit_lower, int_limit_upper)
+
+    return f_density * scipy.stats.binom.pmf(reads, depth, f_1)
+
+
+def rho_competitive_with_sampling(r, depth, mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits):
+
+    f1_integration_limits = [0, 0.5]
+    I = it.quad(competitive_sampling_integrand, *f1_integration_limits, args=(mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits[0], n2_integration_limits[1], r, depth))
+
+    return I[0]
+#%%
+def competition_likelihood_variant(r, depth, mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits):
+
+    return rho_competitive_with_sampling(r, depth, mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits)
+#%%
+# work out the likelihood for the people without variants
+
+def competition_likelihood_no_variant(threshold
+                          , mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits):
+
+    L_below_threshold = it.quad(rho_competitive, 0, threshold, args=(mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits[0], n2_integration_limits[1]))
+    #normalisation = it.quad(rho_competitive, 0, 0.5, args=(mu_1, mu_2, s_1, s_2, age, N, n2_integration_limits[0], n2_integration_limits[1]))
+
+    return L_below_threshold[0]#/normalisation[0]
+
+#%%
+# overall loglikelihood function
+def competition_loglikelihood(optimisation_parameters, variant_quantiles, biobank_ages_bins_novar, N):
+
+    variants_min_vaf = variant_quantiles.VAF.min()
+    mu1, mu2, s1, s2 = optimisation_parameters
+    LL_variant_list = []
+    for row in variant_quantiles.index:
+        depth = variant_quantiles.loc[row]['depth']
+        r = variant_quantiles.loc[row]['var_depth']
+        age = variant_quantiles.loc[row]['Age.when.attended.assessment.centre_v0']
+        integration_limits = [0, 50*(np.exp(s2*age)-1)/s2]
+        parameters = [mu1, mu2, s1, s2, age, N, integration_limits]
+        LL_variant_list.append(np.log(competition_likelihood_variant(r, depth, *parameters)))
+    LL_variants = sum(LL_variant_list)
+
+    LL_no_variants = 0
+    for row in biobank_ages_bins_novar.index:
+        age = biobank_ages_bins_novar.loc[row]['Age.when.attended.assessment.centre_v0']
+        age_count = biobank_ages_bins_novar.loc[row]['age_count']
+        integration_limits = [0, 50*(np.exp(s2*age)-1)/s2]
+        LL_single = np.log(competition_likelihood_no_variant(variants_min_vaf, mu1, mu2, s1, s2, age, N, integration_limits))*age_count
+        LL_no_variants += LL_single
+
+    return -LL_no_variants - LL_variants
+
+#%%
+def competition_predictions_calc(mu1, mu2, s1, s2, N, variant_quantiles, varid, biobank_bins_quantiles, number_of_quantiles):
+
+    D = int(variant_quantiles.depth.mean())
+    number_of_individuals = biobank_bins_quantiles.age_count.sum()
+
+    sampled_quantile_density = {}
+    cumul_quantile_density = {}
+    sampled_overall_density = np.zeros(D+1)
+
+    for qt in range(number_of_quantiles):
+        quantile_age_bins = biobank_bins_quantiles[biobank_bins_quantiles.quantile_labels == qt]
+        n_in_quantile = quantile_age_bins.age_count.sum()
+
+        # calculate sampled density
+        sampled_quantile_density[qt] = np.zeros(D + 1)
+        for row in quantile_age_bins.index:
+            age = quantile_age_bins['Age.when.attended.assessment.centre_v0'][row]
+            age_count = quantile_age_bins['age_count'][row]
+            integration_limits = [0, 50*(np.exp(s2*age)-1)/s2]
+
+            for r in range(D + 1):
+                increment = rho_competitive_with_sampling(r, D, mu1, mu2, s1, s2, age, N, integration_limits) * age_count
+                sampled_quantile_density[qt][r] += increment / n_in_quantile
+                sampled_overall_density[r] += increment / number_of_individuals
+
+                clear_output()
+                print(varid, age, age_count)
+                print(r, '/', D)
+
+        cumul_quantile_density[qt] = np.cumsum(sampled_quantile_density[qt][::-1])[::-1]
+
+
+    cumul_overall_density = np.cumsum(sampled_overall_density[::-1])[::-1]
+
+    return cumul_overall_density, cumul_quantile_density
+
+
+# plotting functions
+
+
+def calculate_clone_proportions(clone_data):
+    # Determine the global time range by getting the union of all time points
+    all_times = sorted(set(t for clone in clone_data.values() for t in clone['times']))
+
+    # Initialize an array to hold the total VAF for each time point
+    total_vaf_at_times = {t: 0 for t in all_times}
+
+    # Iterate through each clone and accumulate the VAF at each time point
+    for clone in clone_data.values():
+        clone_times = clone['times']
+        clone_vaf = clone['VAF']
+
+        for t, vaf in zip(clone_times, clone_vaf):
+            total_vaf_at_times[t] += vaf
+
+    # Calculate the proportion of occupied cells for each time point
+    proportions = {t: vaf / 0.5 for t, vaf in total_vaf_at_times.items()}  # 0.5 is the maximum total VAF
+
+    return proportions
+
+def calculate_mean_proportions(proportions_dict):
+    # Initialize a dictionary to hold cumulative proportions
+    cumulative_proportions = {}
+
+    # Count the number of simulations
+    num_simulations = len(proportions_dict)
+
+    # Iterate over each person's proportions
+    for person_id, proportions in proportions_dict.items():
+        for time, proportion in proportions.items():
+            if time not in cumulative_proportions:
+                cumulative_proportions[time] = 0  # Initialize if not present
+            cumulative_proportions[time] += proportion  # Sum up the proportions
+
+    # Calculate the mean proportions
+    mean_proportions = {time: total / num_simulations for time, total in cumulative_proportions.items()}
+
+    # Sort the mean proportions by key (time) and create a new ordered dictionary
+    sorted_mean_proportions = dict(sorted(mean_proportions.items()))
+
+    return sorted_mean_proportions
+
+def plot_clone_expansion_with_no_negative_bound(ax, clone_data, marker_style='o', marker_color='blue', y_range=(0, 0.5)):
+
+
+    # Determine the global time range by getting the union of all time points
+    all_times = sorted(set(t for clone in clone_data.values() for t in clone['times']))
+
+    # Initialize an array to store VAF values aligned to the global time points
+    aligned_vaf_matrix = []
+    clone_start_indices = []
+
+    # Align the VAF data to the global time points, padding with NaN before clone start times
+    for clone in clone_data.values():
+        vaf = np.full(len(all_times), np.nan)  # Start with NaNs for no-value padding
+        clone_times = clone['times']
+        clone_vaf = clone['VAF']
+
+        # Find the indices in all_times where the clone's times align
+        indices = [all_times.index(t) for t in clone_times]
+
+        # Assign the VAF values at the appropriate time points
+        for i, idx in enumerate(indices):
+            vaf[idx] = clone_vaf[i]
+
+        aligned_vaf_matrix.append(vaf)
+        clone_start_indices.append(indices[0])
+
+    aligned_vaf_matrix = np.array(aligned_vaf_matrix)
+
+    # Time-dependent position matrix to avoid overlaps and start clones evenly
+    num_clones = len(clone_data)
+    position_matrix = np.full_like(aligned_vaf_matrix, np.nan)
+
+    # Evenly space clones along the y-axis at the start
+    even_positions = np.linspace(y_range[0] + 0.05, y_range[1] - 0.05, num_clones)
+
+    # For each clone, initialise their starting positions
+    for i, clone in enumerate(clone_data.keys()):
+        start_idx = clone_start_indices[i]
+        for t in range(start_idx, len(all_times)):
+            # Assign initial position at start and symmetric expansion
+            vaf_half_height = aligned_vaf_matrix[i, t] / 2
+            position_matrix[i, t] = even_positions[i]
+
+            # Adjust to avoid going below 0
+            if position_matrix[i, t] - vaf_half_height < y_range[0]:
+                position_matrix[i, t] = vaf_half_height  # Adjust to stay above 0
+
+            # Check if it overlaps with the previous clone and adjust if necessary
+            for j in range(i):
+                if not np.isnan(position_matrix[j, t]) and abs(position_matrix[i, t] - position_matrix[j, t]) < (aligned_vaf_matrix[i, t] + aligned_vaf_matrix[j, t]) / 2:
+                    position_matrix[i, t] = position_matrix[j, t] + (aligned_vaf_matrix[i, t] + aligned_vaf_matrix[j, t]) / 2
+                    position_matrix[i, t] = min(position_matrix[i, t], y_range[1] - vaf_half_height)  # Constrain to upper bound
+
+    # Plot each clone with dynamically adjusted positions
+    for i, (clone, start_idx) in enumerate(zip(clone_data.keys(), clone_start_indices)):
+        lower_bound = position_matrix[i] - aligned_vaf_matrix[i] / 2
+        upper_bound = position_matrix[i] + aligned_vaf_matrix[i] / 2
+
+        if clone[1][1] == 0.20: fc = 'lightblue'; ec = 'darkblue'; zo=1
+        else: fc='lightgrey'; ec='darkgrey'; zo=0
+
+        # Only plot from the start of the clone (use NaN padding before start)
+        ax.fill_between(all_times[start_idx:], lower_bound[start_idx:], upper_bound[start_idx:],
+                        facecolor=fc, edgecolor=ec, label=clone, alpha=0.8, zorder=zo)
+
+        # Mark the starting point with a customizable marker
+        clone_start_time = clone_data[clone]['times'][0]
+        ax.plot(clone_start_time, position_matrix[i, start_idx], marker=marker_style, color=marker_color, markersize=3)
+
+    # Adding labels and title
+    age_ticks = np.array([0, 10, 20, 30, 40, 50, 60])
+    ax.set_xlabel("Age")
+    ax.set_xticks(age_ticks*5, age_ticks)
+    ax.set_ylabel("VAF")
+    ax.set_ylim(y_range)
+    return 0
